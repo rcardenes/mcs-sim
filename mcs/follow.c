@@ -3,43 +3,29 @@
 #include <math.h>
 #include <time.h>
 
+#include "follow.h"
+
 #define TIME_INT        0.005  /* 5 msec                             */
 #define TRIGGER_LATENCY 0.1    /* Seconds before Bancomm trigger     */
 #define JUMP            0.1    /* Degrees change considered a slew   */
 #define AZ_JUMP         0.1    /* Degrees change considered a slew   */
 #define EL_JUMP         0.1    /* Degrees change considered a slew   */
-#define LOG_LIMIT       72000  /* One hour of TCS logging capability */
 #define NUM_EXTRAP	20	/* number of points to extrapolate    */
 #define	DOUBLE_BUFF	(NUM_EXTRAP>10)
-#define	LOGGING_ON	TRUE
 
 #define MIN(x,y)	((x<y)?x:y)
 #define MIN3(a,b,c)	((a<b) ? ((a<c) ? a : c) : ((b<c) ? b : c))
 
-long fillBuffer		(double *, double *, double *, double *, double *,
-			 double, long, double *, double, double, double,
-                         double, double, long, int);
-long calc_coeffs	(double *, double *, double *, double *, double *,
-			 double *);
-int calc_linear		(double, double, double, double, double, double,
-			 double, double *, double *, double *);
-int calc_quadratic	(double, double, double, double, double, double,
-			 double, double *, double *, double * );
-int fit_new_AZ_demand   (double, double *, double, double *, double,
-                         double *, double, double, double, long, int);
-int fit_new_EL_demand   (double, double *, double, double *, double,
-                         double *, double, double, double, long, int);
 
-static int    firstAzFit = 1;	/* TRUE */
-static int    firstElFit = 1;	/* TRUE */
 
 /* fillBuffer - Extrapolate demands
  */
-long fillBuffer (double *AA,  double *BB,  double *CC, 
+long mcs_sim_fillBuffer (double *AA,  double *BB,  double *CC, 
                  double *pos, double *vel, double offset, 
                  long axis,   double *lastPMACDemand, double jump,
                  double maxVel, double maxAcc, double currentPos,
-                 double currentVel, long trajectoryMode, int recent)
+                 double currentVel, long trajectoryMode, int recent,
+		 mcs_parameters *internal_params)
 {
     int    i, imax;
     long   error;
@@ -54,14 +40,6 @@ long fillBuffer (double *AA,  double *BB,  double *CC,
     double timeA = 0;
     double timeB = 0;
     double timeC = 0;
-    static double azA;
-    static double azB;
-    static double azC;
-    static double elA;
-    static double elB;
-    static double elC;
-    static double lastAzVelocity;
-    static double lastElVelocity;
     double tt;
 
 
@@ -86,31 +64,17 @@ long fillBuffer (double *AA,  double *BB,  double *CC,
 	printf ("Time's Equal!!\n");
 	if (axis == 1)
 	{
-	    A = azA;
-	    B = azB;
-	    C = azC;
+	    A = internal_params->azA;
+	    B = internal_params->azB;
+	    C = internal_params->azC;
 	}
 	else
 	{
-	    A = elA;
-	    B = elB;
-	    C = elC;
+	    A = internal_params->elA;
+	    B = internal_params->elB;
+	    C = internal_params->elC;
 	}
     }
-
-#ifdef OLD_LOGGING
-    if (logging)
-    {
-	if (axis == 1)
-	{
-	    azAA[azCounter] = A;
-	    azBB[azCounter] = B;
-	    azCC[azCounter] = C;
-	    azCounter++;
-	    azCounter %= 96000;
-	}
-    }
-#endif
 
     /* Extrapolate data. Data points are extrapolated from the starting
      * time offset + TIME_INT (0.005) to time offset + NUM_EXTRAP * TIME_INT.
@@ -127,24 +91,24 @@ long fillBuffer (double *AA,  double *BB,  double *CC,
      */
     if (axis == 1)
     {
-	azA = A;
-	azB = B;
-	azC = C;
+	internal_params->azA = A;
+	internal_params->azB = B;
+	internal_params->azC = C;
     }
     else
     {
-	elA = A;
-	elB = B;
-	elC = C;
+	internal_params->elA = A;
+	internal_params->elB = B;
+	internal_params->elC = C;
     }
 
     /* Put the last PMAC position demand in a separate parameter.
      */
     *lastPMACDemand = pos[NUM_EXTRAP-1];
     if (axis == 1)
-	lastAzVelocity = vel[NUM_EXTRAP-1];
+	internal_params->lastAzVelocity = vel[NUM_EXTRAP-1];
     else
-        lastElVelocity = vel[NUM_EXTRAP-1];
+        internal_params->lastElVelocity = vel[NUM_EXTRAP-1];
 
     return (0);
 }
@@ -152,7 +116,7 @@ long fillBuffer (double *AA,  double *BB,  double *CC,
 
 /* calc_coeffs - Not used anymore.
  */
-long calc_coeffs (double *aa, double *bb, double *cc, double *A,
+long mcs_sim_calc_coeffs (double *aa, double *bb, double *cc, double *A,
 		  double *B, double *C)
 {
     double denom;
@@ -173,7 +137,7 @@ long calc_coeffs (double *aa, double *bb, double *cc, double *A,
     return (ret);
 }
 
-int calc_linear (double dpmax,
+int mcs_sim_calc_linear (double dpmax,
                  double ta, double pa,
                  double tb, double pb,
                  double tc, double pc,
@@ -272,7 +236,7 @@ int calc_linear (double dpmax,
 }
 
 
-int calc_quadratic( double dpmax,
+int mcs_sim_calc_quadratic( double dpmax,
                     double ta, double pa,
                     double tb, double pb,
                     double tc, double pc,
@@ -370,13 +334,14 @@ int calc_quadratic( double dpmax,
 }
 
 
-int fit_new_AZ_demand( double timeA, double *posA,
+int mcs_sim_fit_new_AZ_demand( double timeA, double *posA,
                        double timeB, double *posB,
                        double timeC, double *posC,
                        double maxVel, double maxAcc,
                        double currentPos, 
                        long trajectoryMode,
-                       int recent)
+                       int recent,
+		       mcs_parameters *internal_params)
 /*
 **  - - - - - - - - - - - -
 **   fit_new_AZ_demand
@@ -397,10 +362,8 @@ int fit_new_AZ_demand( double timeA, double *posA,
    double prevpa, prevpb, prevpc;
    double ta, tb, tc;
    double jump;
-   static double prevAzVel;
    int    flag  = 0;
    int    index = 0;
-   static double prevAzDemand[3];
 
    pospa = *posA; 
    pospb = *posB; 
@@ -411,18 +374,18 @@ int fit_new_AZ_demand( double timeA, double *posA,
    tc = timeC;
 
    /* in FIT_NEW */ 
-   if (firstAzFit)
+   if (internal_params->firstAzFit)
    {
-       prevAzDemand[0] = pa = currentPos;
-       prevAzDemand[1] = pb = currentPos;
-       prevAzDemand[2] = pc = currentPos;
-       prevAzVel       = 0.0;
-       firstAzFit = 0;
+       internal_params->prevAzDemand[0] = pa = currentPos;
+       internal_params->prevAzDemand[1] = pb = currentPos;
+       internal_params->prevAzDemand[2] = pc = currentPos;
+       internal_params->prevAzVel       = 0.0;
+       internal_params->firstAzFit = 0;
        printf("firstAzFit = 0\n");
    } else {
-       pa = prevAzDemand[0];
-       pb = prevAzDemand[1];
-       pc = prevAzDemand[2];
+       pa = internal_params->prevAzDemand[0];
+       pb = internal_params->prevAzDemand[1];
+       pc = internal_params->prevAzDemand[2];
    } 
    
 
@@ -486,13 +449,13 @@ int fit_new_AZ_demand( double timeA, double *posA,
       flag = 1;
    }
 
-   accel = (vel - prevAzVel)/d;
+   accel = (vel - internal_params->prevAzVel)/d;
 
    /* Apply Acceleration Limit */
    if ( fabs(accel) > maxAcc)
    {
        accel = sign( maxAcc, accel);
-       vel   = prevAzVel + (double)d * accel; 
+       vel   = internal_params->prevAzVel + (double)d * accel; 
        flag = 1;
    }
 
@@ -500,7 +463,7 @@ int fit_new_AZ_demand( double timeA, double *posA,
    if ( fabs(vel) > maxVel)
    {
       vel = sign( maxVel, vel);
-      accel = (vel - prevAzVel)/(double)d;
+      accel = (vel - internal_params->prevAzVel)/(double)d;
       flag = 1;
    }
 
@@ -519,7 +482,7 @@ int fit_new_AZ_demand( double timeA, double *posA,
       if ( (vel > velPos) ) 
       {
           vel = velPos; 
-          accel = (vel - prevAzVel)/(double)d; 
+          accel = (vel - internal_params->prevAzVel)/(double)d; 
           flag  = 1; 
       } 
    } 
@@ -537,7 +500,7 @@ int fit_new_AZ_demand( double timeA, double *posA,
       if ( (vel < velPos) ) 
       {
           vel = velPos; 
-          accel = (vel - prevAzVel)/(double)d;
+          accel = (vel - internal_params->prevAzVel)/(double)d;
           flag = 1; 
       } 
    } 
@@ -546,7 +509,7 @@ int fit_new_AZ_demand( double timeA, double *posA,
  
    if (flag)
    {
-      newpos =  prevAzVel * d + (double)0.5*accel*d*d + pb;
+      newpos =  internal_params->prevAzVel * d + (double)0.5*accel*d*d + pb;
    }
 
 /* Check new position */
@@ -577,10 +540,10 @@ int fit_new_AZ_demand( double timeA, double *posA,
       }
 
 
-   prevAzDemand[0] = pa;
-   prevAzDemand[1] = pb;
-   prevAzDemand[2] = pc;
-   prevAzVel       = vel;
+   internal_params->prevAzDemand[0] = pa;
+   internal_params->prevAzDemand[1] = pb;
+   internal_params->prevAzDemand[2] = pc;
+   internal_params->prevAzVel       = vel;
 
 /* Normal exit. */
    return 0;
@@ -592,13 +555,14 @@ int fit_new_AZ_demand( double timeA, double *posA,
 **  - - - - - - - - - - - -
 **
 */
-int fit_new_EL_demand( double timeA, double *posA,
+int mcs_sim_fit_new_EL_demand( double timeA, double *posA,
                        double timeB, double *posB,
                        double timeC, double *posC,
                        double maxVel, double maxAcc,
                        double currentPos, 
                        long trajectoryMode,
-                       int recent)
+                       int recent,
+		       mcs_parameters *internal_params)
 
 /* sign(A,B) - magnitude of A with sign of B (double) */
 #define sign(A,B) ((B)<0.0?-(A):(A))
@@ -613,10 +577,8 @@ int fit_new_EL_demand( double timeA, double *posA,
    double prevpa, prevpb, prevpc;
    double ta, tb, tc;
    double jump;
-   static double prevElVel;
    int    flag  = 0;
    int    index = 0;
-   static double prevElDemand[3];
 
    pospa = *posA; 
    pospb = *posB; 
@@ -627,18 +589,18 @@ int fit_new_EL_demand( double timeA, double *posA,
    tc = timeC;
 
    /* in FIT_NEW */ 
-   if (firstElFit)
+   if (internal_params->firstElFit)
    {
-       prevElDemand[0] = pa = currentPos;
-       prevElDemand[1] = pb = currentPos;
-       prevElDemand[2] = pc = currentPos;
-       prevElVel       = 0.0;
-       firstElFit = 0;
+       internal_params->prevElDemand[0] = pa = currentPos;
+       internal_params->prevElDemand[1] = pb = currentPos;
+       internal_params->prevElDemand[2] = pc = currentPos;
+       internal_params->prevElVel       = 0.0;
+       internal_params->firstElFit = 0;
        printf("firstElFit = 0\n");
    } else {
-       pa = prevElDemand[0];
-       pb = prevElDemand[1];
-       pc = prevElDemand[2];
+       pa = internal_params->prevElDemand[0];
+       pb = internal_params->prevElDemand[1];
+       pc = internal_params->prevElDemand[2];
    } 
    
 
@@ -702,13 +664,13 @@ int fit_new_EL_demand( double timeA, double *posA,
       flag = 1;
    }
 
-   accel = (vel - prevElVel)/d;
+   accel = (vel - internal_params->prevElVel)/d;
 
    /* Apply Acceleration Limit */
    if ( fabs(accel) > maxAcc)
    {
        accel = sign( maxAcc, accel);
-       vel   = prevElVel + (double)d * accel; 
+       vel   = internal_params->prevElVel + (double)d * accel; 
        flag = 1;
    }
 
@@ -716,7 +678,7 @@ int fit_new_EL_demand( double timeA, double *posA,
    if ( fabs(vel) > maxVel)
    {
       vel = sign( maxVel, vel);
-      accel = (vel - prevElVel)/(double)d;
+      accel = (vel - internal_params->prevElVel)/(double)d;
       flag = 1;
    }
 
@@ -735,7 +697,7 @@ int fit_new_EL_demand( double timeA, double *posA,
       if ( (vel > velPos) ) 
       {
           vel = velPos; 
-          accel = (vel - prevElVel)/(double)d; 
+          accel = (vel - internal_params->prevElVel)/(double)d; 
           flag  = 1; 
       } 
    } 
@@ -753,7 +715,7 @@ int fit_new_EL_demand( double timeA, double *posA,
       if ( (vel < velPos) ) 
       {
           vel = velPos; 
-          accel = (vel - prevElVel)/(double)d;
+          accel = (vel - internal_params->prevElVel)/(double)d;
           flag = 1; 
       } 
    } 
@@ -762,7 +724,7 @@ int fit_new_EL_demand( double timeA, double *posA,
  
    if (flag)
    {
-      newpos =  prevElVel * d + (double)0.5*accel*d*d + pb;
+      newpos =  internal_params->prevElVel * d + (double)0.5*accel*d*d + pb;
    }
    
 /* Check new position */
@@ -792,10 +754,10 @@ int fit_new_EL_demand( double timeA, double *posA,
 	  break;
       }
 
-   prevElDemand[0] = pa;
-   prevElDemand[1] = pb;
-   prevElDemand[2] = pc;
-   prevElVel       = vel;
+   internal_params->prevElDemand[0] = pa;
+   internal_params->prevElDemand[1] = pb;
+   internal_params->prevElDemand[2] = pc;
+   internal_params->prevElVel       = vel;
 
 /* Normal exit. */
    return 0;
