@@ -10,17 +10,13 @@
 #define JUMP            0.1    /* Degrees change considered a slew   */
 #define AZ_JUMP         0.1    /* Degrees change considered a slew   */
 #define EL_JUMP         0.1    /* Degrees change considered a slew   */
-#define NUM_EXTRAP	20	/* number of points to extrapolate    */
 #define	DOUBLE_BUFF	(NUM_EXTRAP>10)
-
-#define MIN(x,y)	((x<y)?x:y)
-#define MIN3(a,b,c)	((a<b) ? ((a<c) ? a : c) : ((b<c) ? b : c))
 
 
 
 /* fillBuffer - Extrapolate demands
  */
-long mcs_sim_fillBuffer (double *AA,  double *BB,  double *CC, 
+long fillBuffer (double *AA,  double *BB,  double *CC, 
                  double *pos, double *vel, double offset, 
                  long axis,   double *lastPMACDemand, double jump,
                  double maxVel, double maxAcc, double currentPos,
@@ -116,7 +112,7 @@ long mcs_sim_fillBuffer (double *AA,  double *BB,  double *CC,
 
 /* calc_coeffs - Not used anymore.
  */
-long mcs_sim_calc_coeffs (double *aa, double *bb, double *cc, double *A,
+long calc_coeffs (double *aa, double *bb, double *cc, double *A,
 		  double *B, double *C)
 {
     double denom;
@@ -137,7 +133,7 @@ long mcs_sim_calc_coeffs (double *aa, double *bb, double *cc, double *A,
     return (ret);
 }
 
-int mcs_sim_calc_linear (double dpmax,
+int calc_linear (double dpmax,
                  double ta, double pa,
                  double tb, double pb,
                  double tc, double pc,
@@ -236,7 +232,7 @@ int mcs_sim_calc_linear (double dpmax,
 }
 
 
-int mcs_sim_calc_quadratic( double dpmax,
+int calc_quadratic( double dpmax,
                     double ta, double pa,
                     double tb, double pb,
                     double tc, double pc,
@@ -334,7 +330,7 @@ int mcs_sim_calc_quadratic( double dpmax,
 }
 
 
-int mcs_sim_fit_new_AZ_demand( double timeA, double *posA,
+int fit_new_AZ_demand( double timeA, double *posA,
                        double timeB, double *posB,
                        double timeC, double *posC,
                        double maxVel, double maxAcc,
@@ -555,7 +551,7 @@ int mcs_sim_fit_new_AZ_demand( double timeA, double *posA,
 **  - - - - - - - - - - - -
 **
 */
-int mcs_sim_fit_new_EL_demand( double timeA, double *posA,
+int fit_new_EL_demand( double timeA, double *posA,
                        double timeB, double *posB,
                        double timeC, double *posC,
                        double maxVel, double maxAcc,
