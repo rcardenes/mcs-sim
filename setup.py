@@ -1,7 +1,7 @@
 from distutils.core import setup, Extension
 
 mcs_module = Extension('mcsDbg._mcs',
-		       sources=['mcs/mcs.c', 'mcs/follow.c'])
+		       sources=['mcsDbg/mcs.c', 'mcsDbg/follow.c'])
 
 setup (name = 'mcsDbg',
        description = 'Debugging tools for MCS algorithms',
