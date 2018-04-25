@@ -5,17 +5,161 @@
 #include <stdlib.h>
 #include "follow.h"
 
+static PyObject *_mcs_get_bool(int *);
+static int _mcs_set_bool(int *, PyObject *);
+static PyObject *_mcs_get_double(double *);
+static double _mcs_set_double(double *, PyObject *);
+static PyObject *_mcs_get_double_arr(double [], unsigned);
+static double _mcs_set_double_arr(double [], unsigned, PyObject *);
+
+/*
+ * This type is essentially a writable tuple (ie. fixed size) to proxy
+ * a C array
+ */
+
 typedef struct {
 	PyObject_HEAD
 
-	mcs_parameters persistent_pars;
-} _mcs_McsParamsObject;
+	Py_ssize_t size;
+	double *p;
+} _DoubleArrayProxy;
 
-static PyObject *_mcs_get_bool(int *ptr) {
+static Py_ssize_t _DoubleArrayProxy_sq_length (_DoubleArrayProxy *self) {
+	return self->size;
+}
+
+static PyObject *_DoubleArrayProxy_sq_item(_DoubleArrayProxy *self, Py_ssize_t index) {
+	if (index >= self->size) {
+		PyErr_SetString(PyExc_IndexError, "Index out of bounds");
+		return NULL;
+	}
+
+	return Py_BuildValue("d", self->p[index]);
+}
+
+static int _DoubleArrayProxy_sq_ass_item(_DoubleArrayProxy *self, Py_ssize_t index, PyObject *item) {
+	if (index >= self->size) {
+		PyErr_SetString(PyExc_IndexError, "Index out of bounds");
+		return -1;
+	}
+
+	return _mcs_set_double(&self->p[index], item);
+}
+
+static int
+_DoubleArrayProxy_init(_DoubleArrayProxy *self, PyObject *args, PyObject *kwds) {
+	PyObject *seq;
+	Py_ssize_t i;
+	double *p;
+
+	if (kwds != NULL) {
+		PyErr_SetString(PyExc_TypeError, "_DoubleArrayProxy.__init__ takes no keyword parameters");
+		return -1;
+	}
+
+	if (!PyArg_ParseTuple(args, "O", &seq)) {
+		return -1;
+	} else if (!PySequence_Check(seq)) {
+		PyErr_SetString(PyExc_TypeError, "The argument has to be a sequence");
+		return -1;
+	} else if (PySequence_Length(seq) != self->size) {
+		char *message;
+
+		// TODO: This should be tested...
+		asprintf(&message, "The sequence argument has to be exactly %ld elements long", self->size);
+		PyErr_SetString(PyExc_ValueError, message);
+		free(message);
+		return -1;
+	}
+
+	for (i = 0, p = self->p; i < self->size; i++, p++) {
+		PyObject *item = PySequence_GetItem(seq, i);
+		int ret = _mcs_set_double(p, PySequence_GetItem(seq, i));
+		Py_DECREF(item);
+		if (ret == -1)
+			return -1;
+	}
+
+	return 0;
+}
+
+static PyObject *
+_DoubleArrayProxyRepr(_DoubleArrayProxy *self)
+{
+	Py_ssize_t i, n;
+	PyObject *pieces, *result = NULL;
+	PyObject *s, *temp;
+	double *p;
+
+	n = self->size;
+	assert(n > 0);
+	pieces = PyTuple_New(n);
+	if (pieces == NULL)
+		return NULL;
+
+	for (i = 0, p = self->p; i < n; i++, p++) {
+		temp = PyFloat_FromDouble(*p);
+		PyTuple_SET_ITEM(pieces, i, PyObject_Repr(temp));
+		Py_DECREF(temp);
+	}
+
+	temp = PyTuple_GET_ITEM(pieces, 0);
+	s = PyString_FromString("(");
+	PyString_ConcatAndDel(&s, temp);
+	PyTuple_SET_ITEM(pieces, 0, s);
+
+	temp = PyTuple_GET_ITEM(pieces, n-1);
+	s = PyString_FromString(")");
+	PyString_ConcatAndDel(&temp, s);
+	PyTuple_SET_ITEM(pieces, n-1, temp);
+
+	s = PyString_FromString(", ");
+	result = _PyString_Join(s, pieces);
+	Py_DECREF(s);
+
+	Py_DECREF(pieces);
+	return result;
+}
+
+static PySequenceMethods _DoubleArrayProxySeqMeth = {
+	.sq_length = (lenfunc)_DoubleArrayProxy_sq_length,
+	.sq_item = (ssizeargfunc)_DoubleArrayProxy_sq_item,
+	.sq_ass_item = (ssizeobjargproc)_DoubleArrayProxy_sq_ass_item,
+};
+
+static PyTypeObject _DoubleArrayProxyType = {
+	PyVarObject_HEAD_INIT(NULL, 0)
+	"_mcs._DoubleArrayProxy",
+	sizeof(_DoubleArrayProxy),
+	0,                               /* tp_itemsize */
+	0,                               /* tp_dealloc */
+	0,                               /* tp_print */
+	0,                               /* tp_getattr */
+	0,                               /* tp_setattr */
+	0,                               /* tp_compare */
+	(reprfunc)_DoubleArrayProxyRepr, /* tp_repr */
+	0,                               /* tp_as_number */
+	&_DoubleArrayProxySeqMeth,       /* tp_as_sequence */
+	0,                               /* tp_as_mapping */
+	0,                               /* tp_hash */
+	0,                               /* tp_call */
+	0,                               /* tp_str */
+	0,                               /* tp_getattro */
+	0,                               /* tp_setattro */
+	0,                               /* tp_as_buffer */
+	Py_TPFLAGS_DEFAULT,              /* tp_flags */
+	"Writable tuple-like object", /* tp_doc */
+};
+
+/*
+ * Utility functions
+ */
+
+PyObject *_mcs_get_bool(int *ptr) {
 	return PyBool_FromLong(*ptr);
 }
 
-static int _mcs_set_bool(int *ptr, PyObject *value) {
+int _mcs_set_bool(int *ptr, PyObject *value) {
 	if(!PyBool_Check(value)) {
 		PyErr_SetString(PyExc_ValueError, "Not a boolean value");
 		return -1;
@@ -25,11 +169,11 @@ static int _mcs_set_bool(int *ptr, PyObject *value) {
 	return 0;
 }
 
-static PyObject *_mcs_get_double(double *ptr) {
+PyObject *_mcs_get_double(double *ptr) {
 	return Py_BuildValue("d", *ptr);
 }
 
-static double _mcs_set_double(double *ptr, PyObject *value) {
+double _mcs_set_double(double *ptr, PyObject *value) {
 	if(PyFloat_Check(value)) {
 		*ptr = PyFloat_AsDouble(value);
 	}
@@ -58,18 +202,23 @@ static double _mcs_set_double(double *ptr, PyObject *value) {
 	return 0;
 }
 
-static PyObject *_mcs_get_double_arr(double ptr[], unsigned sz) {
+PyObject *_mcs_get_double_arr(double ptr[], unsigned sz) {
 	unsigned elements = sz / sizeof(double);
-	unsigned i;
+	_DoubleArrayProxy *dap;
 
-	PyObject *lst = PyList_New(elements);
-	for (i = 0; i < elements; i++) {
-		PyList_SET_ITEM(lst, i, Py_BuildValue("d", ptr[i]));
+	dap = PyObject_New(_DoubleArrayProxy, &_DoubleArrayProxyType);
+	Py_INCREF(dap);
+	if (dap != NULL) {
+		dap->size = elements;
+		dap->p = ptr;
+	} else {
+		PyErr_SetString(PyExc_MemoryError, "Could not create the array proxy object");
 	}
-	return lst;
+
+	return (PyObject *)dap;
 }
 
-static double _mcs_set_double_arr(double ptr[], unsigned sz, PyObject *value) {
+double _mcs_set_double_arr(double ptr[], unsigned sz, PyObject *value) {
 	unsigned elements = sz / sizeof(double);
 	unsigned i;
 
@@ -94,6 +243,16 @@ static double _mcs_set_double_arr(double ptr[], unsigned sz, PyObject *value) {
 
 	return 0;
 }
+
+/*
+ * MCS Parameters Type
+ */
+
+typedef struct {
+	PyObject_HEAD
+
+	mcs_parameters persistent_pars;
+} _mcs_McsParamsObject;
 
 
 #define PY_ATTR_GETSET(NAME, TYPE) \
@@ -201,7 +360,7 @@ static PyObject *
 iface_mcs_sim_fillBuffer(PyObject *self, PyObject *args, PyObject *kwds) {
 	static char *kwlist[] = {
 		"params", "demands", "offset", "jump", "max_vel", "max_acc",
-		"curr_pos", "curr_vel", "recent", NULL
+		"curr_pos", "curr_vel", "recent", "storage", NULL
 	};
 
 	_mcs_McsParamsObject *mcs_params;
@@ -214,15 +373,21 @@ iface_mcs_sim_fillBuffer(PyObject *self, PyObject *args, PyObject *kwds) {
 	double max_vel, max_acc;
 	double curr_pos, curr_vel;
 	PyObject *ret;
+	PyObject *storage = NULL;
 
-	if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!(OOO)", kwlist,
+	if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!(OOO)iddddddi|O", kwlist,
 			&_mcs_McsParamsType, &mcs_params,
 			&dem[0], &dem[1], &dem[2],
 			&axis, &offset, &jump,
 			&max_vel, &max_acc,
 			&curr_pos, &curr_vel,
-			&recent))
+			&recent, &storage))
 		return NULL;
+
+	if ((storage != NULL) && (!PyClass_Check(storage))) {
+		PyErr_SetString(PyExc_TypeError, "storage must be a class object");
+		return NULL;
+	}
 
 	{
 		PyObject *tuple;
@@ -275,6 +440,7 @@ iface_mcs_sim_fillBuffer(PyObject *self, PyObject *args, PyObject *kwds) {
 		double vel[NUM_EXTRAP];
 		double prevDemand;
 		PyObject *ret, *demand_tuple;
+		PyObject *item;
 		int i;
 
 		if (fillBuffer(AA, BB, CC, pos, vel, offset, axis, &prevDemand, jump,
@@ -291,7 +457,15 @@ iface_mcs_sim_fillBuffer(PyObject *self, PyObject *args, PyObject *kwds) {
 		PyTuple_SET_ITEM(ret, 0, Py_BuildValue("d", prevDemand));
 		PyTuple_SET_ITEM(ret, 1, demand_tuple);
 		for (i = 0; i < NUM_EXTRAP; i++) {
-			PyTuple_SET_ITEM(demand_tuple, i, Py_BuildValue("(dd)", pos[i], vel[i]));
+			if (storage != NULL) {
+				PyObject *args = Py_BuildValue("dd", pos[i], vel[i]);
+				item = PyObject_CallObject(storage, args);
+				Py_DECREF(args);
+			}
+			else {
+				item = Py_BuildValue("(dd)", pos[i], vel[i]);
+			}
+			PyTuple_SET_ITEM(demand_tuple, i, item);
 		}
 	}
 
